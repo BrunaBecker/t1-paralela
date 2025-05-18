@@ -31,16 +31,17 @@ static void send_int(int *buf,int dst,int tag,int send_type){
     }
 }
 
-static void recv_int(int *buf,int src,int tag,int recv_type){
+static void recv_int(int *buf,int src,int tag,int recv_type, MPI_Status *st){
     MPI_Request req;
     switch(recv_type){
-        case RECV_SYNC:  MPI_Recv(buf,1,MPI_INT,src,tag,MPI_COMM_WORLD,MPI_STATUS_IGNORE); break;
+        case RECV_SYNC:  MPI_Recv(buf,1,MPI_INT,src,tag,MPI_COMM_WORLD,st); break;
         case RECV_IRECV: MPI_Irecv(buf,1,MPI_INT,src,tag,MPI_COMM_WORLD,&req);
-                         MPI_Wait(&req,MPI_STATUS_IGNORE); break;
+                         MPI_Wait(&req,st); break;
     }
 }
 
 int main(int argc,char **argv){
+    double t_start, t_end, t_total;
     int rank, size, N=100000, task_sz=1000;
     int send_mode, recv_mode;
     if(argc<3){
@@ -54,11 +55,25 @@ int main(int argc,char **argv){
     MPI_Comm_rank(MPI_COMM_WORLD,&rank);
     MPI_Comm_size(MPI_COMM_WORLD,&size);
 
+    if(size == 1){
+        t_start = MPI_Wtime();
+        int local_count = 0;
+	for (int i = 0; i < N; ++i){
+	    if (is_prime(i)) local_count++;
+	}
+	t_end = MPI_Wtime();
+	printf("Total elapsed time: %.9f seconds\n", t_end - t_start);
+	MPI_Finalize();
+	return 0;
+    }
+
+    t_start = MPI_Wtime();
+
     if(rank==0){
         int next_task=0, done_workers=0, tag, buf;
         MPI_Status st;
         while(done_workers < size-1){
-            recv_int(&buf,MPI_ANY_SOURCE,MPI_ANY_TAG,recv_mode);
+            recv_int(&buf,MPI_ANY_SOURCE,MPI_ANY_TAG,recv_mode, &st);
             tag = buf; // worker indica tipo de mensagem no próprio buf
             if(tag==1){  // pedido de tarefa
                 if(next_task>=N){
@@ -74,12 +89,13 @@ int main(int argc,char **argv){
             }
         }
     } else {
+        MPI_Status st;
         int buf, local_count=0;
         while(1){
             buf = 1;
             send_int(&buf,0,1,send_mode);
 
-            recv_int(&buf,0,0,recv_mode);
+            recv_int(&buf,0,0,recv_mode, &st);
             if(buf<0) break;
 
             int start = buf, end = buf+task_sz;
@@ -91,7 +107,16 @@ int main(int argc,char **argv){
         send_int(&buf,0,2,send_mode);
     }
 
+    t_end = MPI_Wtime();
+    t_total = t_end - t_start;
+
+    //double t_max;
+    //MPI_Reduce(&t_total, &t_max, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+
+    if (rank == 0){
+        printf("Total elapsed time: %.9f seconds\n", t_total);
+    }
+
     MPI_Finalize();
     return 0;
 }
- 
